@@ -16,3 +16,7 @@ class LoanApplication(BaseModel):
     amount_paid: float = Field(0.0, ge=0, description="Amount already paid")
     start_date: date = Field(default_factory=date.today)
     due_date: date = Field(..., description="Loan due date")
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
