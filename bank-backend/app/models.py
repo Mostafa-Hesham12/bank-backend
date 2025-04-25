@@ -1,5 +1,5 @@
 # app/models.py
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field , EmailStr
 from datetime import date
 from typing import Optional
 
@@ -17,6 +17,7 @@ class LoanApplication(BaseModel):
     start_date: date = Field(default_factory=date.today)
     due_date: date = Field(..., description="Loan due date")
 
+
 class UserLogin(BaseModel):
-    email: str
-    password: str
+    email: EmailStr  # Ensures valid email format
+    password: str    # In production, add length constraints
