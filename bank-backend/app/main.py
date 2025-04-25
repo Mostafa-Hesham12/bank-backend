@@ -164,3 +164,8 @@ async def health_check():
 @app.get("/test")
 def test_endpoint():
     return {"message": "API is working"}
+
+@app.post("/auth/login")
+async def login(user: UserLogin):
+    # Implement Supabase auth
+    pass
