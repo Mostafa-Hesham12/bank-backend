@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta
 from app.database import supabase
-from app.models import Transaction, LoanApplication
+from app.models import Transaction, LoanApplication , UserLogin
 
 app = FastAPI()
 
@@ -165,7 +165,15 @@ async def health_check():
 def test_endpoint():
     return {"message": "API is working"}
 
+
 @app.post("/auth/login")
 async def login(user: UserLogin):
-    # Implement Supabase auth
-    pass
+    # Supabase auth logic here
+    try:
+        auth_response = supabase.auth.sign_in_with_password({
+            "email": user.email,
+            "password": user.password
+        })
+        return {"token": auth_response.session.access_token}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Login failed")
