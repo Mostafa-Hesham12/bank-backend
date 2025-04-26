@@ -21,3 +21,7 @@ class LoanApplication(BaseModel):
 class UserLogin(BaseModel):
     email: EmailStr  # Ensures valid email format
     password: str    # In production, add length constraints
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
