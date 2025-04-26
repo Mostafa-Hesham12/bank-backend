@@ -1,12 +1,20 @@
 from fastapi import FastAPI, HTTPException, Depends, status, Request
-from fastapi.security import APIKeyHeader
+from fastapi.security import APIKeyHeader , OAuth2PasswordBearer
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta
 from app.database import supabase
-from app.models import Transaction, LoanApplication , UserLogin
+from app.models import Transaction, LoanApplication , UserLogin , Token
+from jose import jwt, JWTError
+import os
 
 app = FastAPI()
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+SECRET_KEY = os.environ["JWT_SECRET"]  
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", 60))
 
 # CORS Middleware
 app.add_middleware(
@@ -15,6 +23,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
 
 # Auth setup
 API_KEY = "your-secret-key"  # Store in .env in production!
@@ -166,14 +176,24 @@ def test_endpoint():
     return {"message": "API is working"}
 
 
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
 @app.post("/auth/login")
 async def login(user: UserLogin):
-    # Supabase auth logic here
+    # ... (كود تسجيل الدخول الحالي)
+    token = create_access_token({"sub": user.email})
+    return {"access_token": token, "token_type": "bearer"}
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
-        auth_response = supabase.auth.sign_in_with_password({
-            "email": user.email,
-            "password": user.password
-        })
-        return {"token": auth_response.session.access_token}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail="Login failed")
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email = payload.get("sub")
+        if email is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return email
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
