@@ -1,8 +1,5 @@
 from supabase import create_client, ClientOptions
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
 
 # Configure client options
 client_options = ClientOptions(
@@ -10,8 +7,9 @@ client_options = ClientOptions(
     persist_session=False
 )
 
+# Initialize Supabase client using Railway environment variables
 supabase = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY"),
+    os.environ["SUPABASE_URL"],  # سيقرأ مباشرة من Railway Variables
+    os.environ["SUPABASE_KEY"],  # سيقرأ مباشرة من Railway Variables
     options=client_options
 )
