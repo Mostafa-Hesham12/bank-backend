@@ -1,42 +1,72 @@
-from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi import FastAPI, HTTPException, Depends, status, Request , Body
 from fastapi.security import APIKeyHeader , OAuth2PasswordBearer
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta
 from app.database import supabase
-from app.models import Transaction, LoanApplication , UserLogin , Token
+from app.models import Transaction, LoanApplication , UserLogin , Token , DepositRequest, WithdrawalRequest , CustomerCreate , EmployeeCreate
 from jose import jwt, JWTError
 import os
 
-app = FastAPI()
+required_vars = ["SUPABASE_URL", "SUPABASE_KEY", "JWT_SECRET"]
+for var in required_vars:
+    if not os.environ.get(var):
+        raise RuntimeError(f"Missing required environment variable: {var}")
+
+app = FastAPI(
+    title="Banking API",
+    description="API for banking operations",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
-SECRET_KEY = os.environ["JWT_SECRET"]  
+SECRET_KEY = os.environ.get("JWT_SECRET")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", 60))
 
-# CORS Middleware
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For development only!
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
 
-# Auth setup
-API_KEY = "your-secret-key"  # Store in .env in production!
+
+API_KEY = "your-secret-key"
 api_key_header = APIKeyHeader(name="X-API-Key")
 
-# Global Exception Handler
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
         content={"message": f"Internal error: {str(exc)}"}
     )
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_data = {
+            "email": payload["sub"],
+            "role": payload["role"],
+            "user_id": payload["user_id"]
+        }
+        if "linked_customer_id" in payload:
+            user_data["linked_customer_id"] = payload["linked_customer_id"]
+        if "linked_employee_id" in payload:
+            user_data["linked_employee_id"] = payload["linked_employee_id"]
+        
+        return user_data
+    except Exception as e:
+        raise HTTPException(401, detail=f"Invalid token: {str(e)}")
+    
+
 
 @app.get("/accounts/{account_id}/balance")
 def get_balance(account_id: int):
@@ -50,119 +80,316 @@ def get_balance(account_id: int):
     "customer_name": f"{account.data[0]['customer']['first_name']} {account.data[0]['customer']['last_name']}"
     }
 
-@app.post("/transactions/transfer",
+@app.post("/transactions/withdraw",
           status_code=status.HTTP_201_CREATED,
           tags=["Transactions"])
-async def transfer_funds(
-    transaction: Transaction,
-    api_key: str = Depends(api_key_header)
+async def withdraw_funds(
+    withdrawal: WithdrawalRequest,
+    current_user: dict = Depends(get_current_user),
 ):
-    """Process money transfer between accounts with full validation"""
+    """Withdraw funds from account"""
     
-    # 1. API Key Validation
-    if api_key != API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key"
-        )
-
-    # 2. Validate Accounts Exist
-    sender = supabase.table("account").select("*").eq("id", transaction.from_account).execute()
-    receiver = supabase.table("account").select("*").eq("id", transaction.to_account).execute()
-    
-    if not sender.data or not receiver.data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="One or more accounts not found"
-        )
-
-    # 3. Check Sufficient Balance
-    if float(sender.data[0]["balance"]) < transaction.amount:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Insufficient funds"
-        )
-
-    # 4. Validate Positive Amount
-    if transaction.amount <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Amount must be positive"
-        )
-
-    # 5. Execute Transfer (Atomic Operation)
     try:
-        transfer_result = supabase.rpc("transfer_funds", {
-            "sender_id": transaction.from_account,
-            "receiver_id": transaction.to_account,
-            "transfer_amount": transaction.amount,
-            "description": transaction.description
-        }).execute()
+        account = supabase.table("account").select("customer_id, balance").eq("id", withdrawal.account_id).execute()
+        if not account.data:
+            raise HTTPException(404, "Account not found")
+        
+        if account.data[0]["customer_id"] != current_user["linked_customer_id"]:
+            raise HTTPException(403, "You can only withdraw from your own account")
+        
+        if withdrawal.amount <= 0:
+            raise HTTPException(400, "Amount must be positive")
+        
+        current_balance = float(account.data[0]["balance"])
+        if current_balance < withdrawal.amount:
+            raise HTTPException(400, "Insufficient funds")
+        
+        new_balance = current_balance - withdrawal.amount
+        supabase.table("account").update({"balance": new_balance}).eq("id", withdrawal.account_id).execute()
+        
+        transaction_data = {
+            "from_account": withdrawal.account_id,
+            "to_account": 0,
+            "amount": float(withdrawal.amount),
+            "description": "Withdrawal by customer",
+            "executed_by": current_user["user_id"],
+            "created_at": datetime.now().isoformat()
+        }
+        
+        transaction_record = supabase.table("transaction").insert(transaction_data).execute()
         
         return {
             "status": "success",
-            "transaction_id": transfer_result.data[0]["id"],
-            "timestamp": datetime.now().isoformat()
+            "new_balance": new_balance,
+            "transaction_id": transaction_record.data[0]["id"]
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
+            
+                
+@app.post("/transactions/deposit",
+          status_code=status.HTTP_201_CREATED,
+          tags=["Transactions"])
+async def deposit_funds(
+    deposit: DepositRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Deposit funds to account"""
+    
+    account = supabase.table("account").select("customer_id, balance").eq("id", deposit.account_id).execute()
+    if not account.data:
+        raise HTTPException(404, "Account not found")
+    
+    if account.data[0]["customer_id"] != current_user["linked_customer_id"]:
+        raise HTTPException(403, "You can only deposit to your own account")
+    
+    if deposit.amount <= 0:
+        raise HTTPException(400, "Amount must be positive")
+    
+    new_balance = float(account.data[0]["balance"]) + deposit.amount
+    supabase.table("account").update({"balance": new_balance}).eq("id", deposit.account_id).execute()
+    
+    transaction_data = {
+        "from_account": 0, 
+        "to_account": deposit.account_id,
+        "amount": float(deposit.amount),
+        "description": "Deposit by bank",
+        "executed_by": 0, 
+        "created_at": datetime.now().isoformat()
+    }
+    
+    transaction_record=supabase.table("transaction").insert(transaction_data).execute()
+    
+    return {
+        "status": "success",
+        "new_balance": new_balance,
+        "transaction_id": transaction_record.data[0]["id"] if transaction_record.data else None
+    }
+
+@app.post("/transactions/transfer")
+async def transfer_funds(
+    transaction: Transaction,
+    request: Request,
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        sender_account = supabase.table("account") \
+            .select("id, customer_id, balance") \
+            .eq("id", transaction.from_account) \
+            .execute()
+
+        if not sender_account.data:
+            raise HTTPException(404, "Sender account not found")
+
+        sender_data = sender_account.data[0]
+        sender_balance = float(sender_data["balance"])
+
+        receiver_account = supabase.table("account") \
+            .select("id, balance") \
+            .eq("id", transaction.to_account) \
+            .execute()
+
+        if not receiver_account.data:
+            raise HTTPException(404, "Receiver account not found")
+
+        if sender_balance < transaction.amount:
+            raise HTTPException(400, "Insufficient funds")
+
+        new_sender_balance = sender_balance - transaction.amount
+        supabase.table("account") \
+            .update({"balance": new_sender_balance}) \
+            .eq("id", transaction.from_account) \
+            .execute()
+
+        receiver_balance = float(receiver_account.data[0]["balance"])
+        new_receiver_balance = receiver_balance + transaction.amount
+        supabase.table("account") \
+            .update({"balance": new_receiver_balance}) \
+            .eq("id", transaction.to_account) \
+            .execute()
+
+        transaction_data = {
+            "from_account": transaction.from_account,
+            "to_account": transaction.to_account,
+            "amount": float(transaction.amount),
+            "description": transaction.description or "Transfer",
+            "executed_by": current_user["user_id"],
+            "created_at": datetime.now().isoformat()
         }
         
+        transaction_record = supabase.table("transaction").insert(transaction_data).execute()
+
+        return {
+            "status": "success",
+            "new_balance": new_sender_balance,
+            "transaction_id": transaction_record.data[0]["id"]
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Transfer failed: {str(e)}"
-        )
+        raise HTTPException(500, detail={
+            "error": "transfer_failed",
+            "message": str(e)
+        })
+
 
 @app.post("/loans/apply")
 def apply_loan(application: LoanApplication):
     """Process new loan application"""
-    # 1. Verify account exists
-    account = supabase.table("account").select("id").eq("id", application.account_id).execute()
-    if not account.data:
-        raise HTTPException(404, "Account not found")
+    try:
+        account = supabase.table("account").select("id").eq("id", application.account_id).execute()
+        if not account.data:
+            raise HTTPException(404, detail={"error": "account_not_found", "account_id": application.account_id})
 
-    # 2. Get loan type details
-    loan_type = supabase.table("loan_type").select("*").eq("id", application.loan_type_id).execute().data[0]
-    
-    # 3. Create loan record
-    loan_data = {
-        "account_id": application.account_id,
-        "loan_type_id": application.loan_type_id,
-        "start_date": datetime.now().date().isoformat(),
-        "due_date": (datetime.now() + timedelta(days=365)).date().isoformat(),  # 1 year term
-        "amount_paid": 0.0
-    }
-    supabase.table("loan").insert(loan_data).execute()
-    
-    return {
-        "message": "Loan approved",
-        "details": {
-            "loan_type": loan_type["type"],
-            "interest_rate": loan_type["base_interest_rate"]
+        loan_type = supabase.table("loan_type").select("*").eq("id", application.loan_type_id).execute()
+        if not loan_type.data:
+            raise HTTPException(404, detail={"error": "loan_type_not_found", "loan_type_id": application.loan_type_id})
+        
+        loan_type = loan_type.data[0]
+        
+        loan_data = {
+            "account_id": application.account_id,
+            "loan_type_id": application.loan_type_id,
+            "start_date": datetime.now().date().isoformat(),
+            "due_date": application.due_date.isoformat() if hasattr(application.due_date, 'isoformat') else application.due_date,
+            "amount_paid": application.amount_paid or 0.0
         }
-    }
+        
+        loan_record = supabase.table("loan").insert(loan_data).execute()
+        
+        return {
+            "status": "approved",
+            "loan_id": loan_record.data[0]["id"],
+            "details": {
+                "loan_type": loan_type["type"],
+                "interest_rate": loan_type["base_interest_rate"],
+                "due_date": loan_data["due_date"]
+            }
+        }
 
-@app.put("/cards/{card_id}/status")
-def update_card_status(card_id: int, is_blocked: bool):
-    """Toggle card blocking status"""
-    supabase.table("card").update({"is_blocked": is_blocked}).eq("id", card_id).execute()
-    return {"message": f"Card {'blocked' if is_blocked else 'unblocked'}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, detail={
+            "error": "loan_processing_failed",
+            "message": str(e)
+        })
 
-@app.get("/accounts/{account_id}/statement")
-def generate_statement(account_id: int, start_date: str, end_date: str):
-    """Generate transaction history between dates"""
-    transactions = supabase.table("transaction").select("*").eq("account_id", account_id).gte("date", start_date).lte("date", end_date).execute()
-    balance = supabase.table("account").select("balance").eq("id", account_id).execute().data[0]["balance"]
-    
-    return {
-        "account_id": account_id,
-        "period": f"{start_date} to {end_date}",
-        "transactions": transactions.data,
-        "current_balance": balance
-    }
+@app.put("/cards/toggle-block")
+async def toggle_card_block(
+    is_blocked: bool = Body(..., embed=True),
+    current_user: dict = Depends(get_current_user)
+):
+    """Toggle blocking status for the authenticated user's card"""
+    try:
+        card_id = current_user["linked_customer_id"]
+        
+        card_response = supabase.table("card") \
+            .select("is_blocked") \
+            .eq("id", card_id) \
+            .execute()
+
+        if not card_response.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No card found for your account"
+            )
+
+        current_status = card_response.data[0]["is_blocked"]
+
+        if current_status == is_blocked:
+            return {
+                "status": "no_change",
+                "card_id": card_id,
+                "current_status": current_status,
+                "message": f"Card is already {'blocked' if is_blocked else 'active'}"
+            }
+
+        supabase.table("card") \
+            .update({"is_blocked": is_blocked}) \
+            .eq("id", card_id) \
+            .execute()
+
+        return {
+            "status": "success",
+            "card_id": card_id,
+            "old_status": current_status,
+            "new_status": is_blocked,
+            "message": f"Card successfully {'blocked' if is_blocked else 'unblocked'}"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating card status: {str(e)}"
+        )
+
+@app.get("/accounts/statement")
+async def generate_statement(
+    start_date: str,
+    end_date: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Generate transaction history between dates for authenticated user's account"""
+    try:
+        account_response = supabase.table("account") \
+            .select("id, balance") \
+            .eq("customer_id", current_user["linked_customer_id"]) \
+            .execute()
+        
+        if not account_response.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No account found for this user"
+            )
+        
+        account_id = account_response.data[0]["id"]
+        balance = account_response.data[0]["balance"]
+
+        transactions = supabase.table("transaction") \
+            .select("*") \
+            .or_(f"from_account.eq.{account_id},to_account.eq.{account_id}") \
+            .gte("created_at", start_date) \
+            .lte("created_at", end_date) \
+            .execute()
+
+        formatted_transactions = []
+        for t in transactions.data:
+            formatted_transactions.append({
+                "id": t["id"],
+                "date": t["created_at"],
+                "amount": t["amount"],
+                "type": "withdrawal" if t["from_account"] == account_id else "deposit",
+                "description": t["description"],
+                "related_account": t["to_account"] if t["from_account"] == account_id else t["from_account"]
+            })
+
+        return {
+            "account_id": account_id,
+            "customer_id": current_user["linked_customer_id"],
+            "period": f"{start_date} to {end_date}",
+            "current_balance": balance,
+            "transaction_count": len(transactions.data),
+            "transactions": formatted_transactions
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating statement: {str(e)}"
+        )
 
 @app.get("/health")
 async def health_check():
     try:
-        # Test DB connection
         supabase.table("account").select("id").limit(1).execute()
         return {"status": "healthy"}
     except Exception as e:
@@ -184,16 +411,149 @@ def create_access_token(data: dict):
 
 @app.post("/auth/login")
 async def login(user: UserLogin):
-    # ... (كود تسجيل الدخول الحالي)
-    token = create_access_token({"sub": user.email})
+    authenticated_user = await authenticate_user(user.email, user.password)
+    if not authenticated_user:
+        raise HTTPException(401, "Invalid credentials")
+    
+    token_data = {
+        "sub": user.email,
+        "role": authenticated_user["role"],
+        "user_id": authenticated_user["user_id"],
+        "linked_customer_id": authenticated_user.get("linked_customer_id"), 
+        "linked_employee_id": authenticated_user.get("linked_employee_id")  
+    }
+    token = create_access_token(token_data)
+    supabase.table("user_authentication").update({
+        "last_login": datetime.now().isoformat()
+    }).eq("user_id", authenticated_user["user_id"]).execute()
+
     return {"access_token": token, "token_type": "bearer"}
 
-async def get_current_user(token: str = Depends(oauth2_scheme)):
+
+
+
+
+
+async def authenticate_user(email: str, password: str):
+    """Authentication function compatible with your 'user_id' column"""
+    user = supabase.table("user_authentication") \
+        .select("user_id, email, role, password, linked_customer_id, linked_employee_id") \
+        .eq("email", email) \
+        .maybe_single() \
+        .execute()
+    
+    if not user.data or user.data["password"] != password:
+        return False
+        
+    return {
+        "email": user.data["email"],
+        "role": user.data["role"],
+        "user_id": user.data["user_id"], 
+        "linked_customer_id": user.data.get("linked_customer_id"),
+        "linked_employee_id": user.data.get("linked_employee_id")
+    }
+
+
+
+
+@app.post("/admin/employees")
+async def create_employee(
+    employee: EmployeeCreate,
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(403, "Only admin can create employees")
+
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email = payload.get("sub")
-        if email is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        return email
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        existing_user = supabase.table("user_authentication") \
+            .select("user_id") \
+            .eq("email", employee.email) \
+            .execute()
+        
+        if existing_user.data:
+            raise HTTPException(400, "Email already exists")
+
+        emp_data = {
+            "first_name": employee.first_name,
+            "last_name": employee.last_name,
+            "position": employee.position,
+            "department_id": None, 
+            "hire_date": datetime.now().date().isoformat()
+        }
+        new_emp = supabase.table("employee").insert(emp_data).execute()
+        emp_id = new_emp.data[0]["employee_id"]
+
+
+        user_data = {
+            "email": employee.email,
+            "password": employee.password,
+            "role": "employee",
+            "linked_employee_id": emp_id,
+            "user_id": emp_id  
+        }
+        supabase.table("user_authentication").insert(user_data).execute()
+
+        return {"status": "success", "employee_id": emp_id}
+
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
+    
+
+
+@app.post("/customers")
+async def create_customer(
+    customer: CustomerCreate,
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["role"] not in ["admin", "employee"]:
+        raise HTTPException(403, "Only staff can create customers")
+
+    try:
+
+        existing_user = supabase.table("user_authentication") \
+            .select("user_id") \
+            .eq("email", customer.email) \
+            .execute()
+        
+        if existing_user.data:
+            raise HTTPException(400, "Email already exists")
+
+
+        cust_data = {
+            "first_name": customer.first_name,
+            "last_name": customer.last_name,
+            "date_of_birth": customer.date_of_birth,
+            "gender": customer.gender
+        }
+        new_cust = supabase.table("customer").insert(cust_data).execute()
+        cust_id = new_cust.data[0]["id"]
+
+
+        account_data = {
+            "id": cust_id,
+            "customer_id": cust_id,
+            "balance": 0.0,
+            "created_at": datetime.now().isoformat()
+        }
+        supabase.table("account").insert(account_data).execute()
+
+
+        user_data = {
+            "email": customer.email,
+            "password": customer.password,
+            "role": "customer",
+            "linked_customer_id": cust_id,
+            "created_at": datetime.now().isoformat()
+        }
+        supabase.table("user_authentication").insert(user_data).execute()
+
+        return {
+            "status": "success",
+            "customer_id": cust_id,
+            "message": "Customer created successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
