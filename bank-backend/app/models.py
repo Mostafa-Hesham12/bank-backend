@@ -1,27 +1,56 @@
-# app/models.py
-from pydantic import BaseModel, Field , EmailStr
+from pydantic import BaseModel, Field , EmailStr, validator
 from datetime import date
 from typing import Optional
 
+class DepositRequest(BaseModel):
+    account_id: int = Field(..., gt=0, description="Account ID to deposit into")
+    amount: float = Field(..., gt=0, description="Deposit amount (must be positive)")
+
+class WithdrawalRequest(BaseModel):
+    account_id: int = Field(..., gt=0, description="Account ID to withdraw from")
+    amount: float = Field(..., gt=0, description="Withdrawal amount (must be positive)")
+
 class Transaction(BaseModel):
-    from_account: int = Field(..., gt=0, description="Sender account ID")
-    to_account: int = Field(..., gt=0, description="Receiver account ID")
-    amount: float = Field(..., gt=0, description="Transfer amount (must be positive)")
-    description: str = Field("Transfer", max_length=100)
-    date: Optional[date] = None  # Will be auto-set if not provided
+    from_account: int
+    to_account: int
+    amount: float
+    description: Optional[str] = "Transfer"
+
 
 class LoanApplication(BaseModel):
-    account_id: int = Field(..., gt=0, description="Account ID applying for loan")
-    loan_type_id: int = Field(..., gt=0, description="Loan type ID")
-    amount_paid: float = Field(0.0, ge=0, description="Amount already paid")
-    start_date: date = Field(default_factory=date.today)
-    due_date: date = Field(..., description="Loan due date")
+    account_id: int
+    loan_type_id: int
+    amount_paid: float = 0.0
+    due_date: date
 
 
 class UserLogin(BaseModel):
-    email: EmailStr  # Ensures valid email format
-    password: str    # In production, add length constraints
+    email: str
+    password: str = Field(..., min_length=4)
+
+    @validator('password')
+    def validate_password(cls, v):
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        return v
 
 class Token(BaseModel):
     access_token: str
     token_type: str
+
+
+class EmployeeCreate(BaseModel):
+    first_name: str
+    last_name: str
+    position: str
+    email: str  
+    password: str  
+
+class CustomerCreate(BaseModel):
+    first_name: str
+    last_name: str
+    email: EmailStr
+    password: str = Field(..., min_length=8)  
+    date_of_birth: Optional[date] = None
+    gender: Optional[str] = None
+    phone: Optional[str] = None
