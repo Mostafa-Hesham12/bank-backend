@@ -557,3 +557,52 @@ async def create_customer(
         raise
     except Exception as e:
         raise HTTPException(500, detail=str(e))
+
+
+@app.delete("/admin/employees/{employee_id}")
+async def delete_employee(
+    employee_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can delete employees")
+    
+    try:
+
+        emp_delete = supabase.table("employee").delete().eq("employee_id", employee_id).execute()
+        if not emp_delete.data:
+            raise HTTPException(404, "Employee not found")
+        
+        supabase.table("user_authentication").delete().eq("linked_employee_id", employee_id).execute()
+        
+        return {"status": "success", "message": "Employee deleted"}
+    
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
+    
+
+@app.delete("/customers/{customer_id}")
+async def delete_customer(
+    customer_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["role"] not in ["admin", "employee"]:
+        raise HTTPException(403, "Only staff can delete customers")
+    
+    try:
+
+        cust_delete = supabase.table("customer").delete().eq("id", customer_id).execute()
+        if not cust_delete.data:
+            raise HTTPException(404, "Customer not found")
+        
+
+        supabase.table("account").delete().eq("customer_id", customer_id).execute()
+        
+        supabase.table("card").delete().eq("id", customer_id).execute()  
+        
+        supabase.table("user_authentication").delete().eq("linked_customer_id", customer_id).execute()
+        
+        return {"status": "success", "message": "Customer deleted"}
+    
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
