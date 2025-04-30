@@ -68,16 +68,26 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     
 
 
-@app.get("/accounts/{account_id}/balance")
-def get_balance(account_id: int):
+@app.get("/accounts/balance")
+def get_alance(current_user: dict = Depends(get_current_user)):
     """Get current balance and account status"""
-    account = supabase.table("account").select( "balance, card(is_blocked), customer(first_name, last_name)" ).eq("id", account_id).execute()
+
+    account_id = current_user.get("linked_customer_id")
+    
+    if not account_id:
+        raise HTTPException(403, "No linked account found")
+    
+    account = supabase.table("account").select(
+        "balance, card(is_blocked), customer(first_name, last_name)"
+    ).eq("id", account_id).execute()
+    
     if not account.data:
         raise HTTPException(404, "Account not found")
+    
     return {
-    "balance": account.data[0]["balance"],
-    "card_status": "Blocked" if account.data[0]["card"]["is_blocked"] else "Active",
-    "customer_name": f"{account.data[0]['customer']['first_name']} {account.data[0]['customer']['last_name']}"
+        "balance": account.data[0]["balance"],
+        "card_status": "Blocked" if account.data[0]["card"]["is_blocked"] else "Active",
+        "customer_name": f"{account.data[0]['customer']['first_name']} {account.data[0]['customer']['last_name']}"
     }
 
 @app.post("/transactions/withdraw",
@@ -172,20 +182,23 @@ async def deposit_funds(
 @app.post("/transactions/transfer")
 async def transfer_funds(
     transaction: Transaction,
-    request: Request,
     current_user: dict = Depends(get_current_user)
 ):
     try:
+        from_account = current_user.get("linked_customer_id")
+        
+        if not from_account:
+            raise HTTPException(403, "No linked account found")
+
         sender_account = supabase.table("account") \
-            .select("id, customer_id, balance") \
-            .eq("id", transaction.from_account) \
+            .select("id, balance") \
+            .eq("id", from_account) \
             .execute()
 
         if not sender_account.data:
             raise HTTPException(404, "Sender account not found")
 
-        sender_data = sender_account.data[0]
-        sender_balance = float(sender_data["balance"])
+        sender_balance = float(sender_account.data[0]["balance"])
 
         receiver_account = supabase.table("account") \
             .select("id, balance") \
@@ -198,21 +211,23 @@ async def transfer_funds(
         if sender_balance < transaction.amount:
             raise HTTPException(400, "Insufficient funds")
 
-        new_sender_balance = sender_balance - transaction.amount
+        new_sender_balance = sender_balance - transaction.amount  
+        new_receiver_balance = float(receiver_account.data[0].get("balance", 0)) + transaction.amount
+
+
         supabase.table("account") \
             .update({"balance": new_sender_balance}) \
-            .eq("id", transaction.from_account) \
+            .eq("id", from_account) \
             .execute()
 
-        receiver_balance = float(receiver_account.data[0]["balance"])
-        new_receiver_balance = receiver_balance + transaction.amount
+
         supabase.table("account") \
             .update({"balance": new_receiver_balance}) \
             .eq("id", transaction.to_account) \
             .execute()
 
         transaction_data = {
-            "from_account": transaction.from_account,
+            "from_account": from_account,
             "to_account": transaction.to_account,
             "amount": float(transaction.amount),
             "description": transaction.description or "Transfer",
@@ -228,8 +243,8 @@ async def transfer_funds(
             "transaction_id": transaction_record.data[0]["id"]
         }
 
-    except HTTPException:
-        raise
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(500, detail={
             "error": "transfer_failed",
