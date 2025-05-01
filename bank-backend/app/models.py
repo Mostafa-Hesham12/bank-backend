@@ -3,11 +3,9 @@ from datetime import date
 from typing import Optional
 
 class DepositRequest(BaseModel):
-    account_id: int = Field(..., gt=0, description="Account ID to deposit into")
     amount: float = Field(..., gt=0, description="Deposit amount (must be positive)")
 
 class WithdrawalRequest(BaseModel):
-    account_id: int = Field(..., gt=0, description="Account ID to withdraw from")
     amount: float = Field(..., gt=0, description="Withdrawal amount (must be positive)")
 
 class Transaction(BaseModel):
