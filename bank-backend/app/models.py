@@ -54,3 +54,11 @@ class CustomerCreate(BaseModel):
     date_of_birth: Optional[date] = None
     gender: Optional[str] = None
     phone: Optional[str] = None
+
+class AdminAccountStatementResponse(BaseModel):
+    account_id: int
+    customer_id: int
+    customer_name: str
+    current_balance: float
+    transaction_count: int
+    transactions: list
