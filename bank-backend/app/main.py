@@ -137,32 +137,39 @@ def get_alance(current_user: dict = Depends(get_current_user)):
           status_code=status.HTTP_201_CREATED,
           tags=["Transactions"])
 async def withdraw_funds(
-    withdrawal: WithdrawalRequest,
+    withdrawal: WithdrawalRequest,  
     current_user: dict = Depends(get_current_user),
 ):
     """Withdraw funds from account"""
     
     try:
-        account = supabase.table("account").select("customer_id, balance").eq("id", withdrawal.account_id).execute()
+        
+        account_id = current_user.get("linked_customer_id")
+        if not account_id:
+            raise HTTPException(403, "No linked account found")
+
+        
+        account = supabase.table("account").select("customer_id, balance").eq("id", account_id).execute()
         if not account.data:
             raise HTTPException(404, "Account not found")
         
-        if account.data[0]["customer_id"] != current_user["linked_customer_id"]:
-            raise HTTPException(403, "You can only withdraw from your own account")
         
         if withdrawal.amount <= 0:
             raise HTTPException(400, "Amount must be positive")
+        
         
         current_balance = float(account.data[0]["balance"])
         if current_balance < withdrawal.amount:
             raise HTTPException(400, "Insufficient funds")
         
+        
         new_balance = current_balance - withdrawal.amount
-        supabase.table("account").update({"balance": new_balance}).eq("id", withdrawal.account_id).execute()
+        supabase.table("account").update({"balance": new_balance}).eq("id", account_id).execute()
+        
         
         transaction_data = {
-            "from_account": withdrawal.account_id,
-            "to_account": 0,
+            "from_account": account_id,
+            "to_account": 0,  
             "amount": float(withdrawal.amount),
             "description": "Withdrawal by customer",
             "executed_by": current_user["user_id"],
@@ -183,31 +190,35 @@ async def withdraw_funds(
         raise HTTPException(500, detail=str(e))
             
                 
+                            
+        
+
 @app.post("/transactions/deposit",
           status_code=status.HTTP_201_CREATED,
           tags=["Transactions"])
 async def deposit_funds(
-    deposit: DepositRequest,
+    deposit: DepositRequest,  
     current_user: dict = Depends(get_current_user),
 ):
     """Deposit funds to account"""
     
-    account = supabase.table("account").select("customer_id, balance").eq("id", deposit.account_id).execute()
+    account_id = current_user.get("linked_customer_id")
+    if not account_id:
+        raise HTTPException(403, "No linked account found")
+
+    account = supabase.table("account").select("customer_id, balance").eq("id", account_id).execute()
     if not account.data:
         raise HTTPException(404, "Account not found")
-    
-    if account.data[0]["customer_id"] != current_user["linked_customer_id"]:
-        raise HTTPException(403, "You can only deposit to your own account")
     
     if deposit.amount <= 0:
         raise HTTPException(400, "Amount must be positive")
     
     new_balance = float(account.data[0]["balance"]) + deposit.amount
-    supabase.table("account").update({"balance": new_balance}).eq("id", deposit.account_id).execute()
+    supabase.table("account").update({"balance": new_balance}).eq("id", account_id).execute()
     
     transaction_data = {
-        "from_account": 0, 
-        "to_account": deposit.account_id,
+        "from_account": 0,  
+        "to_account": account_id,
         "amount": float(deposit.amount),
         "description": "Deposit by bank",
         "executed_by": 0, 
