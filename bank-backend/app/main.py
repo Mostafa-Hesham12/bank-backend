@@ -401,12 +401,11 @@ async def toggle_card_block(
 
 @app.get("/accounts/statement")
 async def generate_statement(
-    start_date: str,
-    end_date: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """Generate transaction history between dates for authenticated user's account"""
+    """Generate full transaction history for authenticated user's account"""
     try:
+
         account_response = supabase.table("account") \
             .select("id, balance") \
             .eq("customer_id", current_user["linked_customer_id"]) \
@@ -421,12 +420,13 @@ async def generate_statement(
         account_id = account_response.data[0]["id"]
         balance = account_response.data[0]["balance"]
 
+ 
         transactions = supabase.table("transaction") \
             .select("*") \
             .or_(f"from_account.eq.{account_id},to_account.eq.{account_id}") \
-            .gte("created_at", start_date) \
-            .lte("created_at", end_date) \
+            .order("created_at", desc=True) \
             .execute()
+
 
         formatted_transactions = []
         for t in transactions.data:
@@ -439,10 +439,14 @@ async def generate_statement(
                 "related_account": t["to_account"] if t["from_account"] == account_id else t["from_account"]
             })
 
+
+        first_date = transactions.data[-1]["created_at"] if transactions.data else "N/A"
+        last_date = transactions.data[0]["created_at"] if transactions.data else "N/A"
+
         return {
             "account_id": account_id,
             "customer_id": current_user["linked_customer_id"],
-            "period": f"{start_date} to {end_date}",
+            "period": "All transactions", 
             "current_balance": balance,
             "transaction_count": len(transactions.data),
             "transactions": formatted_transactions
