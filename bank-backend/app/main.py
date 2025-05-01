@@ -66,7 +66,50 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     except Exception as e:
         raise HTTPException(401, detail=f"Invalid token: {str(e)}")
     
+@app.get("/admin/accounts/{account_id}/statement")
+async def get_account_statement_admin(
+    account_id: int,
+    
+):
+    """Get full account statement for any account (admin/employee only)"""
+    try:
+        
+        
+        account = supabase.table("account") \
+            .select("id, customer_id, balance") \
+            .eq("id", account_id) \
+            .execute()
+        
+        if not account.data:
+            raise HTTPException(404, "Account not found")
+        
+ 
+        transactions = supabase.table("transaction") \
+            .select("*") \
+            .or_(f"from_account.eq.{account_id},to_account.eq.{account_id}") \
+            .order("created_at", desc=True) \
+            .execute()
 
+    
+        customer = supabase.table("customer") \
+            .select("first_name, last_name") \
+            .eq("id", account.data[0]["customer_id"]) \
+            .execute()
+
+      
+        return {
+            "account_id": account_id,
+            "customer_id": account.data[0]["customer_id"],
+            "customer_name": f"{customer.data[0]['first_name']} {customer.data[0]['last_name']}",
+            "current_balance": account.data[0]["balance"],
+            "transaction_count": len(transactions.data),
+            "transactions": transactions.data 
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
 
 @app.get("/accounts/balance")
 def get_alance(current_user: dict = Depends(get_current_user)):
