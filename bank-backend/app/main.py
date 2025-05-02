@@ -112,6 +112,18 @@ async def get_account_statement_admin(
     except Exception as e:
         raise HTTPException(500, detail=str(e))
 
+@app.get("/admin/accounts/{account_id}/balance")
+def get_balance(account_id: int):
+    """Get current balance and account status"""
+    account = supabase.table("account").select( "balance, card(is_blocked), customer(first_name, last_name)" ).eq("id", account_id).execute()
+    if not account.data:
+        raise HTTPException(404, "Account not found")
+    return {
+    "balance": account.data[0]["balance"],
+    "card_status": "Blocked" if account.data[0]["card"]["is_blocked"] else "Active",
+    "customer_name": f"{account.data[0]['customer']['first_name']} {account.data[0]['customer']['last_name']}"
+    }
+
 @app.get("/accounts/balance")
 def get_alance(current_user: dict = Depends(get_current_user)):
     """Get current balance and account status"""
