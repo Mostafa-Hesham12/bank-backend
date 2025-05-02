@@ -526,13 +526,17 @@ async def login(user: AdminLogin):
     authenticated_user = await authenticate_user(user.email, user.password)
     if not authenticated_user:
         raise HTTPException(401, "Invalid credentials")
+    if authenticated_user.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Unauthorized: Admin privileges required")
     
     token_data = {
         "sub": user.email,
         "role": authenticated_user["role"],
         "user_id": authenticated_user["user_id"],
-        "linked_customer_id": authenticated_user.get("linked_customer_id"),  # Add this
-        "linked_employee_id": authenticated_user.get("linked_employee_id")   # Add this
+        "linked_customer_id": authenticated_user.get("linked_customer_id"), 
+        "linked_employee_id": authenticated_user.get("linked_employee_id")  
     }
     token = create_access_token(token_data)
     supabase.table("user_authentication").update({
@@ -546,13 +550,19 @@ async def login(user: EmployeeLogin):
     authenticated_user = await authenticate_user(user.email, user.password)
     if not authenticated_user:
         raise HTTPException(401, "Invalid credentials")
+    if authenticated_user.get("role") != "employee" :
+        if authenticated_user.get("role") != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="Unauthorized: Acsess Denied for customers"
+        )
     
     token_data = {
         "sub": user.email,
         "role": authenticated_user["role"],
         "user_id": authenticated_user["user_id"],
-        "linked_customer_id": authenticated_user.get("linked_customer_id"),  # Add this
-        "linked_employee_id": authenticated_user.get("linked_employee_id")   # Add this
+        "linked_customer_id": authenticated_user.get("linked_customer_id"), 
+        "linked_employee_id": authenticated_user.get("linked_employee_id")   
     }
     token = create_access_token(token_data)
     supabase.table("user_authentication").update({
