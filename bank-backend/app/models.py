@@ -9,7 +9,6 @@ class WithdrawalRequest(BaseModel):
     amount: float = Field(..., gt=0, description="Withdrawal amount (must be positive)")
 
 class Transaction(BaseModel):
-    from_account: int
     to_account: int
     amount: float
     description: Optional[str] = "Transfer"
