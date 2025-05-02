@@ -25,6 +25,14 @@ class UserLogin(BaseModel):
     email: str
     password: str = Field(..., min_length=4)
 
+class AdminLogin(BaseModel):
+    email: str
+    password: str = Field(..., min_length=4)
+
+class EmployeeLogin(BaseModel):
+    email: str
+    password: str = Field(..., min_length=4)
+
     @validator('password')
     def validate_password(cls, v):
         if len(v) < 8:
