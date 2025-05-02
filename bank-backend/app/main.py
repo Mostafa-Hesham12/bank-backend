@@ -236,14 +236,16 @@ async def deposit_funds(
 
 @app.post("/transactions/transfer")
 async def transfer_funds(
-    transaction: Transaction,
+    transaction: Transaction,  
     current_user: dict = Depends(get_current_user)
 ):
     try:
+ 
         from_account = current_user.get("linked_customer_id")
         
         if not from_account:
             raise HTTPException(403, "No linked account found")
+
 
         sender_account = supabase.table("account") \
             .select("id, balance") \
@@ -255,6 +257,7 @@ async def transfer_funds(
 
         sender_balance = float(sender_account.data[0]["balance"])
 
+ 
         receiver_account = supabase.table("account") \
             .select("id, balance") \
             .eq("id", transaction.to_account) \
@@ -263,26 +266,28 @@ async def transfer_funds(
         if not receiver_account.data:
             raise HTTPException(404, "Receiver account not found")
 
+
         if sender_balance < transaction.amount:
             raise HTTPException(400, "Insufficient funds")
 
-        new_sender_balance = sender_balance - transaction.amount  
-        new_receiver_balance = float(receiver_account.data[0].get("balance", 0)) + transaction.amount
+    
+        new_sender_balance = sender_balance - transaction.amount
+        new_receiver_balance = float(receiver_account.data[0]["balance"]) + transaction.amount
 
-
+ 
         supabase.table("account") \
             .update({"balance": new_sender_balance}) \
             .eq("id", from_account) \
             .execute()
-
 
         supabase.table("account") \
             .update({"balance": new_receiver_balance}) \
             .eq("id", transaction.to_account) \
             .execute()
 
+    
         transaction_data = {
-            "from_account": from_account,
+            "from_account": from_account, 
             "to_account": transaction.to_account,
             "amount": float(transaction.amount),
             "description": transaction.description or "Transfer",
@@ -510,22 +515,34 @@ async def login(user: UserLogin):
 
 async def authenticate_user(email: str, password: str):
     """Authentication function compatible with your 'user_id' column"""
-    user = supabase.table("user_authentication") \
-        .select("user_id, email, role, password, linked_customer_id, linked_employee_id") \
-        .eq("email", email) \
-        .maybe_single() \
-        .execute()
-    
-    if not user.data or user.data["password"] != password:
-        return False
+    try:
+
+        user_response = supabase.table("user_authentication") \
+            .select("user_id, email, role, password, linked_customer_id, linked_employee_id") \
+            .eq("email", email) \
+            .execute()
         
-    return {
-        "email": user.data["email"],
-        "role": user.data["role"],
-        "user_id": user.data["user_id"], 
-        "linked_customer_id": user.data.get("linked_customer_id"),
-        "linked_employee_id": user.data.get("linked_employee_id")
-    }
+
+        if not user_response.data or len(user_response.data) == 0:
+            return False
+            
+        user_data = user_response.data[0]
+        
+
+        if user_data["password"] != password:
+            return False
+            
+        return {
+            "email": user_data["email"],
+            "role": user_data["role"],
+            "user_id": user_data["user_id"],
+            "linked_customer_id": user_data.get("linked_customer_id"),
+            "linked_employee_id": user_data.get("linked_employee_id")
+        }
+    
+    except Exception as e:
+        print(f"Authentication error: {str(e)}")
+        return False
 
 
 
