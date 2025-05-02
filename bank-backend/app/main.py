@@ -750,3 +750,20 @@ async def delete_customer(
     
     except Exception as e:
         raise HTTPException(500, detail=str(e))
+
+
+@app.get("/admin/employees")
+async def get_employees(current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != "admin":
+        raise HTTPException(403, "Only admin can view employees")
+    
+    employees = supabase.table("employee").select("*").execute()
+    return employees.data
+
+@app.get("/customers")
+async def get_customers(current_user: dict = Depends(get_current_user)):
+    if current_user["role"] not in ["admin", "employee"]:
+        raise HTTPException(403, "Unauthorized access")
+    
+    customers = supabase.table("customer").select("*").execute()
+    return customers.data
