@@ -72,7 +72,7 @@ async def get_account_statement_admin(
     account_id: int,
     
 ):
-    """Get full account statement for any account (admin/employee only)"""
+
     try:
         
         
@@ -114,7 +114,7 @@ async def get_account_statement_admin(
 
 @app.get("/admin/accounts/{account_id}/balance")
 def get_balance(account_id: int):
-    """Get current balance and account status"""
+
     account = supabase.table("account").select( "balance, card(is_blocked), customer(first_name, last_name)" ).eq("id", account_id).execute()
     if not account.data:
         raise HTTPException(404, "Account not found")
@@ -126,7 +126,6 @@ def get_balance(account_id: int):
 
 @app.get("/accounts/balance")
 def get_alance(current_user: dict = Depends(get_current_user)):
-    """Get current balance and account status"""
 
     account_id = current_user.get("linked_customer_id")
     
@@ -153,7 +152,6 @@ async def withdraw_funds(
     withdrawal: WithdrawalRequest,  
     current_user: dict = Depends(get_current_user),
 ):
-    """Withdraw funds from account"""
     
     try:
         
@@ -213,7 +211,6 @@ async def deposit_funds(
     deposit: DepositRequest,  
     current_user: dict = Depends(get_current_user),
 ):
-    """Deposit funds to account"""
     
     account_id = current_user.get("linked_customer_id")
     if not account_id:
@@ -326,7 +323,6 @@ async def transfer_funds(
 
 @app.post("/loans/apply")
 def apply_loan(application: LoanApplication):
-    """Process new loan application"""
     try:
         account = supabase.table("account").select("id").eq("id", application.account_id).execute()
         if not account.data:
@@ -371,7 +367,6 @@ async def toggle_card_block(
     is_blocked: bool = Body(..., embed=True),
     current_user: dict = Depends(get_current_user)
 ):
-    """Toggle blocking status for the authenticated user's card"""
     try:
         card_id = current_user["linked_customer_id"]
         
@@ -421,7 +416,6 @@ async def toggle_card_block(
 async def generate_statement(
     current_user: dict = Depends(get_current_user)
 ):
-    """Generate full transaction history for authenticated user's account"""
     try:
 
         account_response = supabase.table("account") \
@@ -577,7 +571,6 @@ async def login(user: EmployeeLogin):
 
 
 async def authenticate_user(email: str, password: str):
-    """Authentication function compatible with your 'user_id' column"""
     try:
 
         user_response = supabase.table("user_authentication") \
